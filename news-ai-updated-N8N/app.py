@@ -278,4 +278,4 @@ if st.session_state.result:
                     else:
                         st.error(result_post["response_text"])
 
-
+result_post = post_to_n8n_telegram("اختبار مباشر من التطبيق", language="multi")
