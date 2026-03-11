@@ -1,221 +1,237 @@
 import os
+import requests
 import streamlit as st
 
-from news_tools import fetch_article_text, clean_text, fetch_related_articles
 from agent_utils import (
     analyze_news_article,
     compare_news_coverage,
     build_export_posts,
-    build_related_sources_view,
-    evaluate_credibility,
-    explain_search_strategy
+    build_related_sources_view
 )
 
-st.set_page_config(page_title="News AI Agent", layout="wide")
+st.set_page_config(page_title="Digital Media Assistant", layout="wide")
 
-try:
-    if "OPENAI_API_KEY" in st.secrets:
-        os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
-    if "OPENAI_MODEL" in st.secrets:
-        os.environ["OPENAI_MODEL"] = st.secrets["OPENAI_MODEL"]
-except Exception:
-    pass
+st.title("Digital Media Assistant")
+st.caption(
+    "Paste one news article URL. The agent will summarize it, find related coverage, "
+    "and generate Telegram-ready summaries in Arabic and English."
+)
 
 if "main_analysis" not in st.session_state:
     st.session_state.main_analysis = None
-if "related_view" not in st.session_state:
-    st.session_state.related_view = []
+if "related_analyses" not in st.session_state:
+    st.session_state.related_analyses = []
 if "comparison_summary" not in st.session_state:
     st.session_state.comparison_summary = None
-if "credibility" not in st.session_state:
-    st.session_state.credibility = None
 if "export_posts" not in st.session_state:
     st.session_state.export_posts = None
-if "search_strategy_text" not in st.session_state:
-    st.session_state.search_strategy_text = ""
+if "related_view" not in st.session_state:
+    st.session_state.related_view = None
 
-st.sidebar.title("Agent Settings")
 
-output_language = st.sidebar.selectbox("Output language", ["Arabic", "English"])
-related_count = st.sidebar.slider("Number of related sources to search", min_value=1, max_value=5, value=3)
+def get_n8n_webhook():
+    try:
+        if "N8N_TELEGRAM_WEBHOOK" in st.secrets:
+            return st.secrets["N8N_TELEGRAM_WEBHOOK"]
+    except Exception:
+        pass
+    return os.getenv("N8N_TELEGRAM_WEBHOOK", "")
 
-st.title("News AI Agent")
-st.caption(
-    "Paste one news article URL. The agent will summarize it, search for related coverage, "
-    "show similarities and differences, assess credibility, and generate Telegram/LinkedIn drafts."
-)
 
-news_url = st.text_input("News URL", placeholder="Paste a news article URL here")
-analyze_btn = st.button("Analyze News")
+def post_to_n8n_telegram(message: str, language: str = "ar"):
+    webhook_url = get_n8n_webhook()
 
-if analyze_btn:
-    if not news_url.strip():
-        st.error("Please enter a news URL.")
+    if not webhook_url:
+        return {
+            "success": False,
+            "response_text": "N8N_TELEGRAM_WEBHOOK is missing."
+        }
+
+    payload = {
+        "message": message,
+        "language": language,
+        "source": "digital_media_assistant"
+    }
+
+    try:
+        response = requests.post(webhook_url, json=payload, timeout=25)
+        return {
+            "success": response.ok,
+            "response_text": response.text
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "response_text": str(e)
+        }
+
+
+with st.sidebar:
+    st.header("Inputs")
+    article_url = st.text_input("News article URL")
+    output_language = st.selectbox("Summary language", ["Arabic", "English"], index=0)
+    related_limit = st.slider("Number of related sources", min_value=2, max_value=8, value=4)
+
+    run_btn = st.button("Analyze News", type="primary", use_container_width=True)
+
+
+if run_btn:
+    if not article_url.strip():
+        st.error("Please enter a valid news article URL.")
     else:
-        try:
-            with st.spinner("Fetching and reading the main article..."):
-                main_article = fetch_article_text(news_url)
-                main_article["text"] = clean_text(main_article["text"])
+        with st.spinner("Analyzing main article..."):
+            main_result = analyze_news_article(article_url.strip(), output_language=output_language)
 
-            with st.spinner("Analyzing the main article..."):
-                main_analysis = analyze_news_article(
-                    article_text=main_article["text"],
-                    article_title=main_article["title"],
-                    article_url=main_article["url"],
-                    output_language=output_language
-                )
-
-            search_query = main_analysis.get("suggested_search_query") or main_analysis.get("title") or main_article["title"]
-            search_lang = "ar" if output_language == "Arabic" else "en"
-            search_country = "SA" if output_language == "Arabic" else "US"
-
-            with st.spinner("Searching for related news sources automatically..."):
-                related_articles = fetch_related_articles(
-                    query=search_query,
-                    original_url=main_article["url"],
-                    max_results=related_count,
-                    language_code=search_lang,
-                    country_code=search_country
-                )
+        if main_result.get("error"):
+            st.error(main_result["error"])
+        else:
+            main_article = main_result.get("article", {})
+            main_analysis = main_result.get("analysis", {})
+            related_articles = main_result.get("related_articles", [])[:related_limit]
 
             related_analyses = []
-            for article in related_articles:
-                try:
-                    article["text"] = clean_text(article["text"])
-                    related_analyses.append(
-                        analyze_news_article(
-                            article_text=article["text"],
-                            article_title=article["title"],
-                            article_url=article["url"],
-                            output_language=output_language
-                        )
-                    )
-                except Exception:
-                    continue
+            if related_articles:
+                with st.spinner("Analyzing related coverage..."):
+                    for item in related_articles:
+                        url = item.get("url")
+                        if not url:
+                            continue
+                        rel_result = analyze_news_article(url, output_language=output_language, fetch_related=False)
+                        if not rel_result.get("error"):
+                            related_analyses.append({
+                                "article": rel_result.get("article", {}),
+                                "analysis": rel_result.get("analysis", {})
+                            })
 
-            with st.spinner("Detecting similarities and differences across sources..."):
-                comparison_summary = compare_news_coverage(
-                    primary_analysis=main_analysis,
-                    related_analyses=related_analyses,
-                    output_language=output_language
-                ) if related_analyses else {
-                    "similarities": [],
-                    "differences": [],
-                    "coverage_gaps": [],
-                    "comparison_summary": "No related sources were successfully analyzed."
-                }
+            with st.spinner("Comparing news coverage..."):
+                comparison_summary = compare_news_coverage(main_analysis, related_analyses, output_language=output_language)
 
-            with st.spinner("Preparing credibility report and export posts..."):
-                credibility = evaluate_credibility(main_article["url"], related_analyses, comparison_summary)
+            with st.spinner("Preparing Telegram summaries..."):
                 export_posts = build_export_posts(main_analysis, comparison_summary, output_language=output_language)
-                search_strategy_text = explain_search_strategy(main_analysis, output_language=output_language)
 
-            st.session_state.main_analysis = main_analysis
-            st.session_state.related_view = build_related_sources_view(related_articles, related_analyses)
+            related_view = build_related_sources_view(related_articles)
+
+            st.session_state.main_analysis = {
+                "article": main_article,
+                "analysis": main_analysis
+            }
+            st.session_state.related_analyses = related_analyses
             st.session_state.comparison_summary = comparison_summary
-            st.session_state.credibility = credibility
             st.session_state.export_posts = export_posts
-            st.session_state.search_strategy_text = search_strategy_text
+            st.session_state.related_view = related_view
 
-            st.success("News analyzed successfully.")
-
-        except Exception as e:
-            st.error(f"Error: {e}")
 
 if st.session_state.main_analysis:
-    tabs = st.tabs(["Summary", "Similarities & Differences", "Credibility", "Export"])
+    tabs = st.tabs(["Summary", "Related Sources Found", "Telegram"])
 
     with tabs[0]:
-        st.subheader(st.session_state.main_analysis.get("title", "Article Title"))
-        st.write(st.session_state.main_analysis.get("summary", ""))
+        article = st.session_state.main_analysis["article"]
+        analysis = st.session_state.main_analysis["analysis"]
+
+        st.subheader(article.get("title", "Untitled"))
+        if article.get("source"):
+            st.caption(f"Source: {article.get('source')}")
+
+        st.markdown("### Detailed Summary")
+        st.write(analysis.get("summary", ""))
 
         st.markdown("### Key Points")
-        for point in st.session_state.main_analysis.get("key_points", []):
+        for point in analysis.get("key_points", []):
             st.markdown(f"- {point}")
 
-        st.markdown("### Main Events")
-        for item in st.session_state.main_analysis.get("main_events", []):
-            st.markdown(f"- {item}")
+        col1, col2 = st.columns(2)
 
-        st.markdown("### People")
-        people = st.session_state.main_analysis.get("people", [])
-        st.write(", ".join(people) if people else "N/A")
+        with col1:
+            st.markdown("### Main Events")
+            for item in analysis.get("main_events", []):
+                st.markdown(f"- {item}")
 
-        st.markdown("### Search Workflow")
-        st.write(st.session_state.search_strategy_text)
+            st.markdown("### Prominent People")
+            for item in analysis.get("people", []):
+                st.markdown(f"- {item}")
+
+        with col2:
+            st.markdown("### Organizations")
+            for item in analysis.get("organizations", []):
+                st.markdown(f"- {item}")
+
+            st.markdown("### Locations")
+            for item in analysis.get("locations", []):
+                st.markdown(f"- {item}")
 
     with tabs[1]:
-        st.subheader("Similarities and Differences Found by the Agent")
+        st.subheader("Related Sources Found")
 
         if st.session_state.related_view:
-            st.markdown("### Related Sources Found")
             for item in st.session_state.related_view:
                 with st.expander(item.get("title", "Related source")):
                     st.write(f"**Source:** {item.get('source', 'Unknown')}")
                     st.write(f"**URL:** {item.get('url', '')}")
                     st.write(item.get("summary", ""))
-
-        summary = st.session_state.comparison_summary or {}
-
-        st.markdown("### Similarities")
-        similarities = summary.get("similarities", [])
-        if similarities:
-            for item in similarities:
-                st.markdown(f"- {item}")
         else:
-            st.info("No strong similarities were extracted.")
-
-        st.markdown("### Differences")
-        differences = summary.get("differences", [])
-        if differences:
-            for item in differences:
-                st.markdown(f"- {item}")
-        else:
-            st.info("No major differences were extracted.")
-
-        st.markdown("### Coverage Gaps")
-        gaps = summary.get("coverage_gaps", [])
-        if gaps:
-            for item in gaps:
-                st.markdown(f"- {item}")
-        else:
-            st.info("No coverage gaps were identified.")
-
-        st.markdown("### Final Comparison Summary")
-        st.write(summary.get("comparison_summary", ""))
+            st.info("No related sources were found.")
 
     with tabs[2]:
-        st.subheader("Credibility Check")
-        credibility = st.session_state.credibility
+        st.subheader("Telegram Summaries")
+        posts = st.session_state.export_posts or {}
 
-        if credibility:
-            st.metric("Credibility Score", f"{credibility['credibility_score']}/10")
-            st.write(f"**Level:** {credibility['credibility_level']}")
-            st.write(f"**Domain:** {credibility['domain']}")
+        telegram_post_ar = st.text_area(
+            "ملخص الخبر بالعربية (جاهز لتيليجرام)",
+            posts.get("telegram_post_ar", ""),
+            height=220,
+            key="telegram_post_ar"
+        )
 
-            st.markdown("### Verification References")
-            for item in credibility["references"]:
-                st.markdown(f"- {item}")
+        telegram_post_en = st.text_area(
+            "News Summary in English (Telegram-ready)",
+            posts.get("telegram_post_en", ""),
+            height=220,
+            key="telegram_post_en"
+        )
 
-            st.markdown("### Verification Method")
-            for item in credibility["verification_method"]:
-                st.markdown(f"- {item}")
+        col1, col2 = st.columns(2)
 
-            st.markdown("### Tools Used")
-            for item in credibility["tools_used"]:
-                st.markdown(f"- {item}")
+        with col1:
+            st.download_button(
+                "تحميل الملخص العربي",
+                data=telegram_post_ar.encode("utf-8"),
+                file_name="telegram_post_ar.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
 
-            st.markdown("### Notes")
-            for item in credibility["reasons"]:
-                st.markdown(f"- {item}")
+        with col2:
+            st.download_button(
+                "تحميل الملخص الإنجليزي",
+                data=telegram_post_en.encode("utf-8"),
+                file_name="telegram_post_en.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
 
-    with tabs[3]:
-        st.subheader("Export-ready Posts")
-        posts = st.session_state.export_posts
+        st.markdown("---")
+        st.subheader("Publish to Telegram")
 
-        if posts:
-            st.markdown("### Telegram Post")
-            st.text_area("telegram_post", posts.get("telegram_post", ""), height=180)
+        post_col1, post_col2 = st.columns(2)
 
-            st.markdown("### LinkedIn Post")
-            st.text_area("linkedin_post", posts.get("linkedin_post", ""), height=250)
+        with post_col1:
+            if st.button("Post Arabic Summary", use_container_width=True):
+                if not telegram_post_ar.strip():
+                    st.error("Arabic Telegram summary is empty.")
+                else:
+                    result = post_to_n8n_telegram(telegram_post_ar, language="ar")
+                    if result["success"]:
+                        st.success("Arabic summary posted successfully.")
+                    else:
+                        st.error(result["response_text"])
+
+        with post_col2:
+            if st.button("Post English Summary", use_container_width=True):
+                if not telegram_post_en.strip():
+                    st.error("English Telegram summary is empty.")
+                else:
+                    result = post_to_n8n_telegram(telegram_post_en, language="en")
+                    if result["success"]:
+                        st.success("English summary posted successfully.")
+                    else:
+                        st.error(result["response_text"])
