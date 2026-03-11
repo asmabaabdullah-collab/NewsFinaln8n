@@ -204,9 +204,6 @@ def fetch_related_articles(query: str, original_url: str = "", max_results: int 
         if title.lower() in ["google news", "news.google.com", "untitled", ""]:
             title = source_name or extract_domain_name(final_link) or "Related source"
 
-        if source_name.lower() in ["google news", "news.google.com"]:
-            continue
-
         article_text = ""
         try:
             article = fetch_article_from_url(final_link)
@@ -214,17 +211,11 @@ def fetch_related_articles(query: str, original_url: str = "", max_results: int 
                 article_text = article.get("text", "")
                 source_name = article.get("source", "") or source_name
                 title = article.get("title", "") or title
-
-                if source_name.lower() in ["google news", "news.google.com", "unknown", ""]:
-                    source_name = extract_domain_name(final_link) or "Unknown"
-
-                if title.lower() in ["google news", "news.google.com", "untitled", ""]:
-                    title = source_name or extract_domain_name(final_link) or "Related source"
         except Exception:
             pass
 
-        if source_name.lower() in ["google news", "news.google.com"]:
-            continue
+        if source_name.lower() in ["google news", "news.google.com", ""]:
+            source_name = extract_domain_name(final_link) or "Unknown"
 
         enriched.append(
             {
