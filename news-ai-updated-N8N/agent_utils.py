@@ -131,10 +131,12 @@ def build_related_sources_view(related_articles: list) -> list:
     for item in related_articles:
         text = item.get("text", "") or ""
         summary = text[:500] + ("..." if len(text) > 500 else "")
+
         view.append(
             {
                 "title": item.get("title", "Untitled"),
                 "source": item.get("source", "Unknown"),
+                "published": item.get("published", "Not available"),
                 "url": item.get("url", ""),
                 "summary": summary,
             }
