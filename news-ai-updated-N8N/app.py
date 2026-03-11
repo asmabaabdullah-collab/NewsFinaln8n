@@ -20,7 +20,7 @@ st.caption(
     "1) Paste a news article URL from any news website\n"
     "2) Or paste a news title and article text\n"
     "3) The AI translates and summarizes the news in Arabic and English in the Summary tab\n"
-    "4) The Related Sources tab shows where else the story appeared\n"
+    "4) The Related Sources tab shows the news website, publication date, and a visit button\n"
     "5) The Telegram tab prepares one editable post box containing Arabic title + Arabic summary + Arabic hashtags, followed by English title + English summary + English hashtags, with download and post controls"
 )
 
@@ -182,6 +182,7 @@ if run_btn:
             st.session_state.telegram_combined_text = build_combined_telegram_text(posts)
             st.session_state.telegram_post_generated = True
 
+
 if st.session_state.result:
     result = st.session_state.result
     analysis = result.get("analysis", {})
@@ -193,27 +194,36 @@ if st.session_state.result:
         st.subheader("Summary")
 
         col1, col2 = st.columns(2)
+
         with col1:
-            st.markdown("### Original Title")
-            st.write(article.get("title", ""))
+            st.markdown("### English Title")
+            st.write(analysis.get("title_en", article.get("title", "")))
 
             st.markdown("### English Summary")
             st.write(analysis.get("summary_en", ""))
 
+            st.markdown("### Key Points")
+            key_points_en = analysis.get("key_points_en", [])
+            if key_points_en:
+                for point in key_points_en:
+                    st.markdown(f"- {point}")
+            else:
+                st.info("No English key points available.")
+
         with col2:
-            st.markdown("### العنوان الأصلي")
-            st.write(article.get("title", ""))
+            st.markdown("### العنوان بالعربية")
+            st.write(analysis.get("title_ar", article.get("title", "")))
 
             st.markdown("### الملخص العربي")
             st.write(analysis.get("summary_ar", ""))
 
-        st.markdown("### Key Points")
-        key_points = analysis.get("key_points", [])
-        if key_points:
-            for point in key_points:
-                st.markdown(f"- {point}")
-        else:
-            st.info("No key points available.")
+            st.markdown("### أبرز النقاط")
+            key_points_ar = analysis.get("key_points_ar", [])
+            if key_points_ar:
+                for point in key_points_ar:
+                    st.markdown(f"- {point}")
+            else:
+                st.info("لا توجد نقاط رئيسية بالعربية.")
 
     with tabs[1]:
         st.subheader("Related Sources")
@@ -222,20 +232,16 @@ if st.session_state.result:
         if related_items:
             for idx, item in enumerate(related_items, start=1):
                 with st.container(border=True):
-                    st.markdown(f"### {idx}. {item.get('title', 'Related source')}")
-                    st.write(f"**Source:** {item.get('source', 'Unknown')}")
+                    st.markdown(f"### {idx}. {item.get('source', 'Unknown')}")
                     st.write(f"**Published:** {item.get('published', 'Not available')}")
 
                     if item.get("url"):
-                        st.link_button("Open Source", item.get("url"))
-
+                        st.link_button("Visit Page", item.get("url"))
         else:
             st.info("No related sources found.")
 
     with tabs[2]:
         st.subheader("Telegram")
-
-        posts = hydrate_missing_hashtags(st.session_state.telegram_posts)
 
         combined_text = st.text_area(
             "Telegram post preview and editor",
@@ -262,9 +268,6 @@ if st.session_state.result:
                 if not st.session_state.telegram_combined_text.strip():
                     st.error("Telegram post is empty.")
                 else:
-                    st.write("Preview message:")
-                    st.code(st.session_state.telegram_combined_text)
-
                     result_post = post_to_n8n_telegram(
                         st.session_state.telegram_combined_text,
                         language="multi",
