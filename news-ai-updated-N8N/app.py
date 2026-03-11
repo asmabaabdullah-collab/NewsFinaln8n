@@ -225,20 +225,20 @@ if st.session_state.result:
             else:
                 st.info("لا توجد نقاط رئيسية بالعربية.")
 
-  with tabs[1]:
-    st.subheader("Related Sources")
+    with tabs[1]:
+        st.subheader("Related Sources")
 
-    related_items = st.session_state.related_view
-    if related_items:
-        for idx, item in enumerate(related_items, start=1):
-            with st.container(border=True):
-                st.markdown(f"### {idx}. {item.get('source', 'Unknown')}")
-                st.write(f"**Published:** {item.get('published', 'Not available')}")
+        related_items = st.session_state.related_view
+        if related_items:
+            for idx, item in enumerate(related_items, start=1):
+                with st.container(border=True):
+                    st.markdown(f"### {idx}. {item.get('source', 'Unknown')}")
+                    st.write(f"**Published:** {item.get('published', 'Not available')}")
 
-                if item.get("url"):
-                    st.link_button("Visit Page", item.get("url"))
-    else:
-        st.info("No related sources found.")
+                    if item.get("url"):
+                        st.link_button("Visit Page", item.get("url"))
+        else:
+            st.info("No related sources found.")
 
     with tabs[2]:
         st.subheader("Telegram")
