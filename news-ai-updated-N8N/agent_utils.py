@@ -136,6 +136,9 @@ def build_related_sources_view(related_articles: list) -> list:
         if title and title.strip().lower() == "google news":
             title = source_name or "Related source"
 
+        if source_name and source_name.strip().lower() in ["google news", "news.google.com"]:
+            source_name = "Unknown"
+
         view.append(
             {
                 "title": title,
