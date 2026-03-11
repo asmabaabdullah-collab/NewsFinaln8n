@@ -2,9 +2,8 @@ import json
 
 from llm_utils import call_llm_json
 from news_tools import (
-    extract_article,
-    search_related_articles,
-    fetch_related_articles_details,
+    fetch_article_text,
+    fetch_related_articles,
 )
 
 
@@ -19,9 +18,10 @@ def analyze_news_article(url, output_language="Arabic", fetch_related=True):
         "related_articles": [...]
     }
     """
-    article = extract_article(url)
-    if article.get("error"):
-        return {"error": article["error"]}
+    try:
+        article = fetch_article_text(url)
+    except Exception as e:
+        return {"error": str(e)}
 
     system_prompt = """
 You are a professional digital media analyst.
@@ -62,8 +62,16 @@ Return JSON with exactly this structure:
     related_articles = []
     if fetch_related:
         query = analysis.get("search_query") or article.get("title", "")
-        search_results = search_related_articles(query, limit=6)
-        related_articles = fetch_related_articles_details(search_results)
+        try:
+            related_articles = fetch_related_articles(
+                query=query,
+                original_url=url,
+                max_results=6,
+                language_code="en",
+                country_code="US",
+            )
+        except Exception:
+            related_articles = []
 
     return {
         "error": None,
@@ -76,8 +84,7 @@ Return JSON with exactly this structure:
 def compare_news_coverage(main_analysis, related_analyses, output_language="Arabic"):
     """
     Compare the main article analysis against related coverage.
-    This is used internally to improve Telegram export quality,
-    even if similarities/differences are not shown in the UI.
+    This is used internally to improve Telegram export quality.
     """
     if not related_analyses:
         return {
@@ -134,7 +141,6 @@ Return JSON with exactly this structure:
 def build_export_posts(analysis, comparison_summary, output_language="Arabic"):
     """
     Generate Telegram-ready summaries in Arabic and English only.
-    This matches the Telegram tab in the app.
     """
     system_prompt = """
 You are a professional media content editor.
@@ -162,7 +168,6 @@ Rules:
 - no exaggeration
 - based only on supplied content
 - do not invent facts
-- make the wording polished and platform-appropriate
 
 Return JSON with exactly these keys:
 {{
@@ -184,7 +189,7 @@ Return JSON with exactly these keys:
 
 def build_related_sources_view(related_articles):
     """
-    Prepare related sources for display in the 'Related Sources Found' tab.
+    Prepare related sources for display in the Related Sources Found tab.
     """
     view = []
 
