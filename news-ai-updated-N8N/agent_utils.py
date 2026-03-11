@@ -128,17 +128,21 @@ Return JSON with exactly this structure:
 
 def build_related_sources_view(related_articles: list) -> list:
     view = []
+
     for item in related_articles:
-        text = item.get("text", "") or ""
-        summary = text[:500] + ("..." if len(text) > 500 else "")
+        source_name = item.get("source", "Unknown")
+        title = item.get("title", "Untitled")
+
+        if title and title.strip().lower() == "google news":
+            title = source_name or "Related source"
 
         view.append(
             {
-                "title": item.get("title", "Untitled"),
-                "source": item.get("source", "Unknown"),
+                "title": title,
+                "source": source_name,
                 "published": item.get("published", "Not available"),
                 "url": item.get("url", ""),
-                "summary": summary,
             }
         )
+
     return view
