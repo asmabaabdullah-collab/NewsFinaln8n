@@ -183,6 +183,16 @@ def extract_site_name(url: str) -> str:
         return ""
 
 
+from urllib.parse import urlparse
+
+
+def extract_site_name(url: str) -> str:
+    try:
+        return urlparse(url).netloc.replace("www.", "").strip().lower()
+    except Exception:
+        return ""
+
+
 def build_related_sources_view(related_articles: list) -> list:
     view = []
 
@@ -193,11 +203,14 @@ def build_related_sources_view(related_articles: list) -> list:
 
         domain = extract_site_name(url)
 
-        if not source_name or source_name.lower() in ["google news", "news.google.com", "unknown"]:
+        if not source_name or source_name.lower() in ["unknown", ""]:
             source_name = domain or "Unknown"
 
-        if source_name.lower() in ["google news", "news.google.com", ""]:
-            continue
+        if source_name.lower() in ["google news", "news.google.com"]:
+            if domain and domain not in ["news.google.com", ""]:
+                source_name = domain
+            else:
+                continue
 
         view.append(
             {
