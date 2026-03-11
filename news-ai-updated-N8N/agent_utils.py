@@ -6,6 +6,7 @@ from news_tools import (
     fetch_article_from_url,
     build_article_from_text,
     fetch_related_articles,
+    search_related_articles,
 )
 
 
@@ -38,6 +39,13 @@ def analyze_news_input(
             or article_text_fallback
         )
 
+        # هذه للتبويب فقط: سريعة وأكثر ثباتًا
+        related_sources = search_related_articles(
+            query=search_query,
+            max_results=related_limit,
+        )
+
+        # هذه للاستخدام الداخلي إن احتجتها لاحقًا
         related_articles = fetch_related_articles(
             query=search_query,
             original_url=original_url,
@@ -48,6 +56,7 @@ def analyze_news_input(
             "error": None,
             "article": article,
             "analysis": analysis,
+            "related_sources": related_sources,
             "related_articles": related_articles,
         }
     except Exception as e:
@@ -84,13 +93,6 @@ Return JSON with exactly this structure:
   "key_points_en": ["Clear English point 1", "Clear English point 2", "Clear English point 3"],
   "search_query": "short search query to find related coverage"
 }}
-
-Additional instructions:
-- Arabic output must read as if written by a professional Arabic news editor.
-- Prefer elegant Arabic phrasing over literal translation.
-- Keep names and entities accurate.
-- Keep the summary concise but complete.
-- Do not add facts that are not present in the article.
 """
 
     result = call_llm_json(system_prompt, user_prompt, temperature=0.1)
@@ -173,30 +175,10 @@ def extract_site_name(url: str) -> str:
         return ""
 
 
-from urllib.parse import urlparse
-
-
-def extract_site_name(url: str) -> str:
-    try:
-        return urlparse(url).netloc.replace("www.", "").strip().lower()
-    except Exception:
-        return ""
-
-
-from urllib.parse import urlparse
-
-
-def extract_site_name(url: str) -> str:
-    try:
-        return urlparse(url).netloc.replace("www.", "").strip().lower()
-    except Exception:
-        return ""
-
-
-def build_related_sources_view(related_articles: list) -> list:
+def build_related_sources_view(related_sources: list) -> list:
     view = []
 
-    for item in related_articles:
+    for item in related_sources:
         url = (item.get("url") or "").strip()
         published = item.get("published", "Not available")
         source_name = (item.get("source") or "").strip()
@@ -211,6 +193,9 @@ def build_related_sources_view(related_articles: list) -> list:
                 source_name = domain
             else:
                 continue
+
+        if source_name.lower() == "news.google.com":
+            continue
 
         view.append(
             {
