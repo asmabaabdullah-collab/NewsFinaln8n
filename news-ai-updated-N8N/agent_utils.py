@@ -2,126 +2,65 @@ import json
 
 from llm_utils import call_llm_json
 from news_tools import (
-    fetch_article_text,
+    fetch_article_from_url,
+    build_article_from_text,
     fetch_related_articles,
 )
 
 
-def analyze_news_article(url, output_language="Arabic", fetch_related=True):
-    """
-    Extract a news article, analyze it, and optionally fetch related coverage.
-    Returns:
-    {
-        "error": None or str,
-        "article": {...},
-        "analysis": {...},
-        "related_articles": [...]
-    }
-    """
+def analyze_news_input(
+    input_mode: str,
+    article_url: str = "",
+    article_title: str = "",
+    article_text: str = "",
+    related_limit: int = 4,
+):
     try:
-        article = fetch_article_text(url)
+        if input_mode == "News URL":
+            article = fetch_article_from_url(article_url)
+            original_url = article_url
+        else:
+            article = build_article_from_text(article_title, article_text)
+            original_url = ""
+
+        if article.get("error"):
+            return {"error": article["error"]}
+
+        analysis = analyze_article_content(article)
+
+        search_query = analysis.get("search_query") or article.get("title", "")
+        related_articles = fetch_related_articles(
+            query=search_query,
+            original_url=original_url,
+            max_results=related_limit,
+        )
+
+        return {
+            "error": None,
+            "article": article,
+            "analysis": analysis,
+            "related_articles": related_articles,
+        }
     except Exception as e:
         return {"error": str(e)}
 
+
+def analyze_article_content(article: dict) -> dict:
     system_prompt = """
 You are a professional digital media analyst.
 Analyze the provided news article and return valid JSON only.
 """
 
     user_prompt = f"""
-Output language: {output_language}
-
 Article:
 {json.dumps(article, ensure_ascii=False, indent=2)}
 
 Return JSON with exactly this structure:
 {{
-  "summary": "Detailed but concise summary of the article",
+  "summary_ar": "Accurate Arabic summary in formal Arabic",
+  "summary_en": "Accurate English summary",
   "key_points": ["point 1", "point 2", "point 3"],
-  "main_events": ["event 1", "event 2"],
-  "people": ["person 1", "person 2"],
-  "organizations": ["org 1", "org 2"],
-  "locations": ["location 1", "location 2"],
   "search_query": "short search query to find related coverage"
-}}
-"""
-
-    analysis = call_llm_json(system_prompt, user_prompt, temperature=0.2)
-
-    if not isinstance(analysis, dict):
-        analysis = {}
-
-    analysis.setdefault("summary", "")
-    analysis.setdefault("key_points", [])
-    analysis.setdefault("main_events", [])
-    analysis.setdefault("people", [])
-    analysis.setdefault("organizations", [])
-    analysis.setdefault("locations", [])
-    analysis.setdefault("search_query", article.get("title", ""))
-
-    related_articles = []
-    if fetch_related:
-        query = analysis.get("search_query") or article.get("title", "")
-        try:
-            related_articles = fetch_related_articles(
-                query=query,
-                original_url=url,
-                max_results=6,
-                language_code="en",
-                country_code="US",
-            )
-        except Exception:
-            related_articles = []
-
-    return {
-        "error": None,
-        "article": article,
-        "analysis": analysis,
-        "related_articles": related_articles,
-    }
-
-
-def compare_news_coverage(main_analysis, related_analyses, output_language="Arabic"):
-    """
-    Compare the main article analysis against related coverage.
-    This is used internally to improve Telegram export quality.
-    """
-    if not related_analyses:
-        return {
-            "similarities": [],
-            "differences": [],
-            "coverage_gaps": [],
-            "comparison_summary": "",
-        }
-
-    related_only_analyses = []
-    for item in related_analyses:
-        if isinstance(item, dict):
-            related_only_analyses.append(item.get("analysis", item))
-        else:
-            related_only_analyses.append(item)
-
-    system_prompt = """
-You are a news comparison analyst.
-Compare the main article analysis with the related coverage analyses.
-Return valid JSON only.
-"""
-
-    user_prompt = f"""
-Output language: {output_language}
-
-Main analysis:
-{json.dumps(main_analysis, ensure_ascii=False, indent=2)}
-
-Related analyses:
-{json.dumps(related_only_analyses, ensure_ascii=False, indent=2)}
-
-Return JSON with exactly this structure:
-{{
-  "similarities": ["similarity 1", "similarity 2"],
-  "differences": ["difference 1", "difference 2"],
-  "coverage_gaps": ["gap 1", "gap 2"],
-  "comparison_summary": "overall comparison summary"
 }}
 """
 
@@ -130,49 +69,42 @@ Return JSON with exactly this structure:
     if not isinstance(result, dict):
         result = {}
 
-    result.setdefault("similarities", [])
-    result.setdefault("differences", [])
-    result.setdefault("coverage_gaps", [])
-    result.setdefault("comparison_summary", "")
+    result.setdefault("summary_ar", "")
+    result.setdefault("summary_en", "")
+    result.setdefault("key_points", [])
+    result.setdefault("search_query", article.get("title", ""))
 
     return result
 
 
-def build_export_posts(analysis, comparison_summary, output_language="Arabic"):
-    """
-    Generate Telegram-ready titles and summaries in Arabic and English.
-    """
+def build_export_posts(analysis: dict, related_articles: list) -> dict:
     system_prompt = """
-You are a professional media content editor.
-Create Telegram-ready news titles and summaries only.
+You are a professional media editor.
+Create Telegram-ready titles and summaries in Arabic and English.
 Return valid JSON only.
 """
 
     user_prompt = f"""
-Output language: {output_language}
-
 Main analysis:
 {json.dumps(analysis, ensure_ascii=False, indent=2)}
 
-Comparison summary:
-{json.dumps(comparison_summary, ensure_ascii=False, indent=2)}
+Related sources:
+{json.dumps(related_articles[:4], ensure_ascii=False, indent=2)}
 
 Create:
 1. Arabic news title suitable for Telegram
-2. Arabic news summary suitable for Telegram
+2. Arabic summary suitable for Telegram
 3. English news title suitable for Telegram
-4. English news summary suitable for Telegram
+4. English summary suitable for Telegram
 
 Rules:
-- accurate and professional
+- professional and accurate
 - concise but informative
-- title must be short and news-style
-- summary must complement the title
 - no exaggeration
 - based only on supplied content
 - do not invent facts
 
-Return JSON with exactly these keys:
+Return JSON with exactly this structure:
 {{
   "telegram_title_ar": "",
   "telegram_post_ar": "",
@@ -194,16 +126,11 @@ Return JSON with exactly these keys:
     return result
 
 
-def build_related_sources_view(related_articles):
-    """
-    Prepare related sources for display in the Related Sources Found tab.
-    """
+def build_related_sources_view(related_articles: list) -> list:
     view = []
-
     for item in related_articles:
         text = item.get("text", "") or ""
         summary = text[:500] + ("..." if len(text) > 500 else "")
-
         view.append(
             {
                 "title": item.get("title", "Untitled"),
@@ -212,5 +139,4 @@ def build_related_sources_view(related_articles):
                 "summary": summary,
             }
         )
-
     return view
