@@ -1,87 +1,144 @@
 import json
-from llm_utils import call_llm_json, call_llm_text
-from credibility_tools import build_credibility_report
+
+from llm_utils import call_llm_json
+from news_tools import (
+    extract_article,
+    search_related_articles,
+    fetch_related_articles_details,
+)
 
 
-def analyze_news_article(article_text, article_title, article_url, output_language="Arabic"):
-    """Analyze one news article and extract a structured representation that will drive summary, comparison, and export."""
+def analyze_news_article(url, output_language="Arabic", fetch_related=True):
+    """
+    Extract a news article, analyze it, and optionally fetch related coverage.
+    Returns:
+    {
+        "error": None or str,
+        "article": {...},
+        "analysis": {...},
+        "related_articles": [...]
+    }
+    """
+    article = extract_article(url)
+    if article.get("error"):
+        return {"error": article["error"]}
+
     system_prompt = """
-You are an expert news analysis assistant.
-Use only the supplied article text.
-Do not invent facts.
-Return valid JSON only.
+You are a professional digital media analyst.
+Analyze the provided news article and return valid JSON only.
 """
 
     user_prompt = f"""
 Output language: {output_language}
 
-Article URL:
-{article_url}
+Article:
+{json.dumps(article, ensure_ascii=False, indent=2)}
 
-Article title:
-{article_title}
-
-Article text:
-{article_text}
-
-Return JSON with exactly these keys:
+Return JSON with exactly this structure:
 {{
-  "title": "",
-  "summary": "",
-  "key_points": [],
-  "main_events": [],
-  "people": [],
-  "organizations": [],
-  "countries": [],
-  "topic": "",
-  "tone": "",
-  "keywords": [],
-  "suggested_search_query": ""
+  "summary": "Detailed but concise summary of the article",
+  "key_points": ["point 1", "point 2", "point 3"],
+  "main_events": ["event 1", "event 2"],
+  "people": ["person 1", "person 2"],
+  "organizations": ["org 1", "org 2"],
+  "locations": ["location 1", "location 2"],
+  "search_query": "short search query to find related coverage"
 }}
 """
 
-    return call_llm_json(system_prompt, user_prompt)
+    analysis = call_llm_json(system_prompt, user_prompt, temperature=0.2)
 
+    if not isinstance(analysis, dict):
+        analysis = {}
 
+    analysis.setdefault("summary", "")
+    analysis.setdefault("key_points", [])
+    analysis.setdefault("main_events", [])
+    analysis.setdefault("people", [])
+    analysis.setdefault("organizations", [])
+    analysis.setdefault("locations", [])
+    analysis.setdefault("search_query", article.get("title", ""))
 
-def compare_news_coverage(primary_analysis, related_analyses, output_language="Arabic"):
-    """Compare the original article with searched related articles and return explicit similarities and differences as JSON."""
-    system_prompt = """
-You are a professional media comparison assistant.
-Compare multiple reports covering the same news event.
-Only use the supplied analyses.
-Return valid JSON only.
-"""
+    related_articles = []
+    if fetch_related:
+        query = analysis.get("search_query") or article.get("title", "")
+        search_results = search_related_articles(query, limit=6)
+        related_articles = fetch_related_articles_details(search_results)
 
-    payload = {
-        "primary": primary_analysis,
-        "related_sources": related_analyses
+    return {
+        "error": None,
+        "article": article,
+        "analysis": analysis,
+        "related_articles": related_articles,
     }
 
+
+def compare_news_coverage(main_analysis, related_analyses, output_language="Arabic"):
+    """
+    Compare the main article analysis against related coverage.
+    This is used internally to improve Telegram export quality,
+    even if similarities/differences are not shown in the UI.
+    """
+    if not related_analyses:
+        return {
+            "similarities": [],
+            "differences": [],
+            "coverage_gaps": [],
+            "comparison_summary": "",
+        }
+
+    related_only_analyses = []
+    for item in related_analyses:
+        if isinstance(item, dict):
+            related_only_analyses.append(item.get("analysis", item))
+        else:
+            related_only_analyses.append(item)
+
+    system_prompt = """
+You are a news comparison analyst.
+Compare the main article analysis with the related coverage analyses.
+Return valid JSON only.
+"""
+
     user_prompt = f"""
 Output language: {output_language}
 
-News analyses:
-{json.dumps(payload, ensure_ascii=False, indent=2)}
+Main analysis:
+{json.dumps(main_analysis, ensure_ascii=False, indent=2)}
 
-Return JSON with exactly these keys:
+Related analyses:
+{json.dumps(related_only_analyses, ensure_ascii=False, indent=2)}
+
+Return JSON with exactly this structure:
 {{
-  "similarities": [],
-  "differences": [],
-  "coverage_gaps": [],
-  "comparison_summary": ""
+  "similarities": ["similarity 1", "similarity 2"],
+  "differences": ["difference 1", "difference 2"],
+  "coverage_gaps": ["gap 1", "gap 2"],
+  "comparison_summary": "overall comparison summary"
 }}
 """
 
-    return call_llm_json(system_prompt, user_prompt, temperature=0.2)
+    result = call_llm_json(system_prompt, user_prompt, temperature=0.2)
 
+    if not isinstance(result, dict):
+        result = {}
+
+    result.setdefault("similarities", [])
+    result.setdefault("differences", [])
+    result.setdefault("coverage_gaps", [])
+    result.setdefault("comparison_summary", "")
+
+    return result
 
 
 def build_export_posts(analysis, comparison_summary, output_language="Arabic"):
-    """Generate concise platform-ready drafts for Telegram and LinkedIn using the analyzed article plus comparison context."""
+    """
+    Generate Telegram-ready summaries in Arabic and English only.
+    This matches the Telegram tab in the app.
+    """
     system_prompt = """
-You are a media content assistant.
-Create platform-ready post drafts.
+You are a professional media content editor.
+Create Telegram-ready summaries only.
 Return valid JSON only.
 """
 
@@ -94,55 +151,54 @@ Main analysis:
 Comparison summary:
 {json.dumps(comparison_summary, ensure_ascii=False, indent=2)}
 
+Create:
+1. An Arabic Telegram summary in formal, accurate, natural Arabic
+2. An English Telegram summary in professional, accurate English
+
+Rules:
+- concise but informative
+- suitable for Telegram
+- professional and clear
+- no exaggeration
+- based only on supplied content
+- do not invent facts
+- make the wording polished and platform-appropriate
+
 Return JSON with exactly these keys:
 {{
-  "telegram_post": "",
-  "linkedin_post": ""
+  "telegram_post_ar": "",
+  "telegram_post_en": ""
 }}
 """
 
-    return call_llm_json(system_prompt, user_prompt, temperature=0.3)
+    result = call_llm_json(system_prompt, user_prompt, temperature=0.3)
+
+    if not isinstance(result, dict):
+        result = {}
+
+    result.setdefault("telegram_post_ar", "")
+    result.setdefault("telegram_post_en", "")
+
+    return result
 
 
+def build_related_sources_view(related_articles):
+    """
+    Prepare related sources for display in the 'Related Sources Found' tab.
+    """
+    view = []
 
-def build_related_sources_view(related_articles, related_analyses):
-    """Merge article metadata with analysis output to produce a simple list ready for display in the interface."""
-    rows = []
-    for article, analysis in zip(related_articles, related_analyses):
-        rows.append({
-            "source": article.get("source", "Unknown"),
-            "title": analysis.get("title", article.get("title", "")),
-            "url": article.get("url", ""),
-            "summary": analysis.get("summary", "")
-        })
-    return rows
+    for item in related_articles:
+        text = item.get("text", "") or ""
+        summary = text[:500] + ("..." if len(text) > 500 else "")
 
+        view.append(
+            {
+                "title": item.get("title", "Untitled"),
+                "source": item.get("source", "Unknown"),
+                "url": item.get("url", ""),
+                "summary": summary,
+            }
+        )
 
-
-def evaluate_credibility(article_url, related_analyses, comparison_summary):
-    """Create a credibility report that explains the method, references, and score derived from the cross-source comparison."""
-    return build_credibility_report(article_url, len(related_analyses), comparison_summary)
-
-
-
-def explain_search_strategy(primary_analysis, output_language="Arabic"):
-    """Explain in natural language how the agent searched for related sources so the workflow remains transparent to the user."""
-    system_prompt = """
-You are an assistant that explains agent workflows clearly and briefly.
-Write plain text only.
-"""
-
-    user_prompt = f"""
-Output language: {output_language}
-
-Primary analysis:
-{json.dumps(primary_analysis, ensure_ascii=False, indent=2)}
-
-Explain in 4 short bullet points:
-1. How the search query was selected
-2. How related sources were found
-3. How similarities and differences were detected
-4. Why this improves verification transparency
-"""
-
-    return call_llm_text(system_prompt, user_prompt, temperature=0.2)
+    return view
