@@ -115,10 +115,10 @@ def fetch_article_from_url(url: str) -> dict:
         except Exception:
             text = ""
 
-    if title.strip().lower() in ["google news", "news.google.com", "untitled"]:
+    if title.strip().lower() in ["google news", "news.google.com", "untitled", ""]:
         title = source or extract_domain_name(final_url) or "Related source"
 
-    if source.strip().lower() in ["google news", "news.google.com"]:
+    if source.strip().lower() in ["google news", "news.google.com", ""]:
         source = extract_domain_name(final_url) or "Unknown"
 
     return {
@@ -151,21 +151,27 @@ def search_related_articles(query: str, max_results: int = 6) -> list:
     for entry in feed.entries[:max_results]:
         source_name = ""
         if hasattr(entry, "source") and isinstance(entry.source, dict):
-            source_name = entry.source.get("title", "")
+            source_name = clean_text(entry.source.get("title", ""))
 
         raw_link = getattr(entry, "link", "")
         resolved_link = resolve_final_url(raw_link)
 
         entry_title = clean_text(getattr(entry, "title", ""))
-        if entry_title.strip().lower() in ["google news", "news.google.com", "untitled"]:
-            entry_title = source_name or extract_domain_name(resolved_link) or "Related source"
+        if entry_title.strip().lower() in ["google news", "news.google.com", "untitled", ""]:
+            entry_title = source_name or extract_domain_name(resolved_link or raw_link) or "Related source"
+
+        if not source_name:
+            source_name = extract_domain_name(resolved_link or raw_link) or "Unknown"
+
+        if source_name.lower() in ["google news", "news.google.com", ""]:
+            source_name = extract_domain_name(resolved_link or raw_link) or "Unknown"
 
         results.append(
             {
                 "title": entry_title,
                 "url": resolved_link or raw_link,
                 "source": source_name,
-                "published": getattr(entry, "published", ""),
+                "published": getattr(entry, "published", "Not available"),
                 "summary": clean_text(getattr(entry, "summary", "")),
             }
         )
@@ -173,13 +179,13 @@ def search_related_articles(query: str, max_results: int = 6) -> list:
 
 
 def fetch_related_articles(query: str, original_url: str = "", max_results: int = 4) -> list:
-    items = search_related_articles(query, max_results=max_results + 4)
+    items = search_related_articles(query, max_results=max_results + 6)
     enriched = []
 
     normalized_original = resolve_final_url(original_url) if original_url else ""
 
     for item in items:
-        link = item.get("url", "")
+        link = (item.get("url") or "").strip()
         if not link:
             continue
 
@@ -188,32 +194,45 @@ def fetch_related_articles(query: str, original_url: str = "", max_results: int 
         if normalized_original and final_link == normalized_original:
             continue
 
-        article = fetch_article_from_url(final_link)
-        if article.get("error"):
+        source_name = (item.get("source") or "").strip()
+        title = (item.get("title") or "").strip()
+        published = item.get("published", "Not available")
+
+        if source_name.lower() in ["google news", "news.google.com", "unknown", ""]:
+            source_name = extract_domain_name(final_link) or "Unknown"
+
+        if title.lower() in ["google news", "news.google.com", "untitled", ""]:
+            title = source_name or extract_domain_name(final_link) or "Related source"
+
+        if source_name.lower() in ["google news", "news.google.com"]:
             continue
 
-        article_title = article.get("title", "").strip()
-        article_source = article.get("source", "").strip()
+        article_text = ""
+        try:
+            article = fetch_article_from_url(final_link)
+            if not article.get("error"):
+                article_text = article.get("text", "")
+                source_name = article.get("source", "") or source_name
+                title = article.get("title", "") or title
 
-        final_title = article_title or item.get("title", "") or "Untitled"
-        final_source = article_source or item.get("source", "") or extract_domain_name(final_link) or "Unknown"
+                if source_name.lower() in ["google news", "news.google.com", "unknown", ""]:
+                    source_name = extract_domain_name(final_link) or "Unknown"
 
-        if final_source.strip().lower() in ["google news", "news.google.com", "unknown", ""]:
-            final_source = extract_domain_name(final_link) or "Unknown"
+                if title.lower() in ["google news", "news.google.com", "untitled", ""]:
+                    title = source_name or extract_domain_name(final_link) or "Related source"
+        except Exception:
+            pass
 
-        if final_title.strip().lower() in ["google news", "news.google.com", "untitled"]:
-            final_title = final_source or extract_domain_name(final_link) or "Related source"
-
-        if final_source.strip().lower() in ["google news", "news.google.com"]:
+        if source_name.lower() in ["google news", "news.google.com"]:
             continue
 
         enriched.append(
             {
-                "title": final_title,
+                "title": title,
                 "url": final_link,
-                "source": final_source,
-                "text": article.get("text", ""),
-                "published": item.get("published", ""),
+                "source": source_name,
+                "text": article_text,
+                "published": published,
             }
         )
 
