@@ -126,25 +126,43 @@ Return JSON with exactly this structure:
     return result
 
 
+from urllib.parse import urlparse
+
+
+def extract_site_name(url: str) -> str:
+    try:
+        domain = urlparse(url).netloc.lower().replace("www.", "").strip()
+        return domain
+    except Exception:
+        return ""
+
+
 def build_related_sources_view(related_articles: list) -> list:
     view = []
 
     for item in related_articles:
-        source_name = item.get("source", "Unknown")
-        title = item.get("title", "Untitled")
+        url = (item.get("url") or "").strip()
+        title = (item.get("title") or "Untitled").strip()
+        source_name = (item.get("source") or "").strip()
+        published = item.get("published", "Not available")
 
-        if title and title.strip().lower() == "google news":
+        domain = extract_site_name(url)
+
+        if not source_name or source_name.lower() in ["google news", "news.google.com", "unknown"]:
+            source_name = domain or "Unknown"
+
+        if title.lower() in ["google news", "news.google.com", "untitled"]:
             title = source_name or "Related source"
 
-        if source_name and source_name.strip().lower() in ["google news", "news.google.com"]:
-            source_name = "Unknown"
+        if source_name.lower() in ["google news", "news.google.com"]:
+            continue
 
         view.append(
             {
                 "title": title,
                 "source": source_name,
-                "published": item.get("published", "Not available"),
-                "url": item.get("url", ""),
+                "published": published,
+                "url": url,
             }
         )
 
