@@ -140,11 +140,11 @@ Return JSON with exactly this structure:
 
 def build_export_posts(analysis, comparison_summary, output_language="Arabic"):
     """
-    Generate Telegram-ready summaries in Arabic and English only.
+    Generate Telegram-ready titles and summaries in Arabic and English.
     """
     system_prompt = """
 You are a professional media content editor.
-Create Telegram-ready summaries only.
+Create Telegram-ready news titles and summaries only.
 Return valid JSON only.
 """
 
@@ -158,20 +158,25 @@ Comparison summary:
 {json.dumps(comparison_summary, ensure_ascii=False, indent=2)}
 
 Create:
-1. An Arabic Telegram summary in formal, accurate, natural Arabic
-2. An English Telegram summary in professional, accurate English
+1. Arabic news title suitable for Telegram
+2. Arabic news summary suitable for Telegram
+3. English news title suitable for Telegram
+4. English news summary suitable for Telegram
 
 Rules:
+- accurate and professional
 - concise but informative
-- suitable for Telegram
-- professional and clear
+- title must be short and news-style
+- summary must complement the title
 - no exaggeration
 - based only on supplied content
 - do not invent facts
 
 Return JSON with exactly these keys:
 {{
+  "telegram_title_ar": "",
   "telegram_post_ar": "",
+  "telegram_title_en": "",
   "telegram_post_en": ""
 }}
 """
@@ -181,7 +186,9 @@ Return JSON with exactly these keys:
     if not isinstance(result, dict):
         result = {}
 
+    result.setdefault("telegram_title_ar", "")
     result.setdefault("telegram_post_ar", "")
+    result.setdefault("telegram_title_en", "")
     result.setdefault("telegram_post_en", "")
 
     return result
