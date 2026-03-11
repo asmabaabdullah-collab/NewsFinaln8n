@@ -1,112 +1,150 @@
-import requests
-import feedparser
-from bs4 import BeautifulSoup
-from readability import Document
+import html
+import re
 from urllib.parse import quote_plus
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-}
+import feedparser
+import requests
+from bs4 import BeautifulSoup
+
+try:
+    import trafilatura
+except Exception:
+    trafilatura = None
 
 
 def clean_text(text: str) -> str:
-    """Normalize whitespace in extracted article text so the model receives cleaner, shorter context."""
-    return " ".join((text or "").split())
+    if not text:
+        return ""
+    text = html.unescape(text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
+def fetch_article_from_url(url: str) -> dict:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36"
+        )
+    }
 
-def fetch_article_text(url: str):
-    """Download a news webpage, extract the main readable content, and return title plus cleaned article text."""
-    response = requests.get(url, headers=HEADERS, timeout=25)
-    response.raise_for_status()
+    try:
+        response = requests.get(url, headers=headers, timeout=20)
+        response.raise_for_status()
+        html_content = response.text
+    except Exception as e:
+        return {
+            "title": "",
+            "text": "",
+            "source": "",
+            "url": url,
+            "error": f"Failed to fetch URL: {e}",
+        }
 
-    html = response.text
-    doc = Document(html)
-    title = clean_text(doc.short_title())
-    summary_html = doc.summary()
+    title = ""
+    text = ""
+    source = ""
 
-    soup = BeautifulSoup(summary_html, "html.parser")
-    text = clean_text(soup.get_text(separator=" ", strip=True))
+    try:
+        soup = BeautifulSoup(html_content, "html.parser")
+        if soup.title and soup.title.string:
+            title = clean_text(soup.title.string)
+        source = requests.utils.urlparse(url).netloc
+    except Exception:
+        pass
+
+    if trafilatura:
+        try:
+            downloaded = trafilatura.fetch_url(url)
+            if downloaded:
+                extracted = trafilatura.extract(
+                    downloaded,
+                    include_comments=False,
+                    include_tables=False,
+                )
+                if extracted:
+                    text = clean_text(extracted)
+        except Exception:
+            pass
 
     if not text:
-        full_soup = BeautifulSoup(html, "html.parser")
-        text = clean_text(full_soup.get_text(separator=" ", strip=True))
+        try:
+            soup = BeautifulSoup(html_content, "html.parser")
+            paragraphs = [p.get_text(" ", strip=True) for p in soup.find_all("p")]
+            text = clean_text(" ".join(paragraphs))
+        except Exception:
+            text = ""
 
     return {
-        "url": url,
         "title": title,
-        "text": text
+        "text": text,
+        "source": source,
+        "url": url,
+        "error": None,
     }
 
 
+def build_article_from_text(title: str, text: str) -> dict:
+    return {
+        "title": clean_text(title),
+        "text": clean_text(text),
+        "source": "Manual Input",
+        "url": "",
+        "error": None,
+    }
 
-def build_google_news_rss_url(query: str, language_code: str = "en", country_code: str = "US"):
-    """Build a Google News RSS search URL that can be used as a lightweight search tool for related coverage."""
-    encoded = quote_plus(query)
-    return (
-        f"https://news.google.com/rss/search?q={encoded}"
-        f"&hl={language_code}-{country_code}&gl={country_code}&ceid={country_code}:{language_code}"
+
+def search_related_articles(query: str, max_results: int = 6) -> list:
+    rss_url = (
+        f"https://news.google.com/rss/search?q={quote_plus(query)}"
+        f"&hl=en-US&gl=US&ceid=US:en"
     )
-
-
-
-def search_related_news(query: str, max_results: int = 5, language_code: str = "en", country_code: str = "US"):
-    """Search Google News RSS for articles related to the same topic and return candidate sources for comparison."""
-    rss_url = build_google_news_rss_url(query, language_code=language_code, country_code=country_code)
     feed = feedparser.parse(rss_url)
 
     results = []
-    for entry in feed.entries[: max_results * 3]:
-        link = entry.get("link", "")
-        title = clean_text(entry.get("title", ""))
-        source = clean_text(entry.get("source", {}).get("title", "")) if entry.get("source") else ""
-        published = entry.get("published", "")
+    for entry in feed.entries[:max_results]:
+        source_name = ""
+        if hasattr(entry, "source") and isinstance(entry.source, dict):
+            source_name = entry.source.get("title", "")
 
-        if link:
-            results.append({
-                "title": title,
+        results.append(
+            {
+                "title": getattr(entry, "title", ""),
+                "url": getattr(entry, "link", ""),
+                "source": source_name,
+                "published": getattr(entry, "published", ""),
+                "summary": clean_text(getattr(entry, "summary", "")),
+            }
+        )
+    return results
+
+
+def fetch_related_articles(query: str, original_url: str = "", max_results: int = 4) -> list:
+    items = search_related_articles(query, max_results=max_results + 2)
+    enriched = []
+
+    for item in items:
+        link = item.get("url", "")
+        if not link:
+            continue
+        if original_url and link == original_url:
+            continue
+
+        article = fetch_article_from_url(link)
+        if article.get("error"):
+            continue
+
+        enriched.append(
+            {
+                "title": article.get("title", item.get("title", "")),
                 "url": link,
-                "source": source,
-                "published": published
-            })
+                "source": item.get("source", article.get("source", "")),
+                "text": article.get("text", ""),
+                "published": item.get("published", ""),
+            }
+        )
 
-    unique = []
-    seen = set()
-    for item in results:
-        key = item["url"]
-        if key not in seen:
-            seen.add(key)
-            unique.append(item)
-        if len(unique) >= max_results:
+        if len(enriched) >= max_results:
             break
 
-    return unique
-
-
-
-def fetch_related_articles(query: str, original_url: str, max_results: int = 3, language_code: str = "en", country_code: str = "US"):
-    """Search for related news, exclude the original article, fetch readable text, and return usable articles for comparison."""
-    search_results = search_related_news(
-        query=query,
-        max_results=max_results + 2,
-        language_code=language_code,
-        country_code=country_code
-    )
-
-    articles = []
-    for item in search_results:
-        if item["url"] == original_url:
-            continue
-        try:
-            article = fetch_article_text(item["url"])
-            article["source"] = item.get("source", "")
-            article["published"] = item.get("published", "")
-            articles.append(article)
-        except Exception:
-            continue
-
-        if len(articles) >= max_results:
-            break
-
-    return articles
+    return enriched
