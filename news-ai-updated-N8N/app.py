@@ -21,7 +21,7 @@ st.caption(
     "2) Or paste a news title and article text\n"
     "3) The AI translates and summarizes the news in Arabic and English in the Summary tab\n"
     "4) The Related Sources tab shows where else the story appeared\n"
-    "5) The Telegram tab prepares editable Arabic and English Telegram-ready content and lets you post through n8n"
+    "5) The Telegram tab prepares one editable post box containing Arabic title + Arabic summary + Arabic hashtags, followed by English title + English summary + English hashtags, with download, post, and edit controls"
 )
 
 if "result" not in st.session_state:
@@ -30,6 +30,12 @@ if "related_view" not in st.session_state:
     st.session_state.related_view = []
 if "telegram_posts" not in st.session_state:
     st.session_state.telegram_posts = {}
+if "telegram_combined_text" not in st.session_state:
+    st.session_state.telegram_combined_text = ""
+if "telegram_post_generated" not in st.session_state:
+    st.session_state.telegram_post_generated = False
+if "telegram_edit_mode" not in st.session_state:
+    st.session_state.telegram_edit_mode = False
 
 
 def get_n8n_webhook() -> str:
@@ -41,7 +47,7 @@ def get_n8n_webhook() -> str:
     return os.getenv("N8N_TELEGRAM_WEBHOOK", "")
 
 
-def post_to_n8n_telegram(message: str, language: str = "ar") -> dict:
+def post_to_n8n_telegram(message: str, language: str = "multi") -> dict:
     webhook_url = get_n8n_webhook()
     if not webhook_url:
         return {
@@ -66,6 +72,59 @@ def post_to_n8n_telegram(message: str, language: str = "ar") -> dict:
             "success": False,
             "response_text": str(e),
         }
+
+
+def normalize_hashtags(text: str) -> str:
+    if not text:
+        return ""
+    parts = []
+    for item in text.replace("\n", " ").split():
+        token = item.strip()
+        if not token:
+            continue
+        if not token.startswith("#"):
+            token = f"#{token}"
+        parts.append(token)
+    return " ".join(parts)
+
+
+def build_combined_telegram_text(posts: dict) -> str:
+    title_ar = (posts.get("telegram_title_ar") or "").strip()
+    summary_ar = (posts.get("telegram_post_ar") or "").strip()
+    hashtags_ar = normalize_hashtags(posts.get("telegram_hashtags_ar", ""))
+
+    title_en = (posts.get("telegram_title_en") or "").strip()
+    summary_en = (posts.get("telegram_post_en") or "").strip()
+    hashtags_en = normalize_hashtags(posts.get("telegram_hashtags_en", ""))
+
+    sections = []
+
+    arabic_block = "\n".join(
+        [part for part in [title_ar, summary_ar, hashtags_ar] if part]
+    ).strip()
+    if arabic_block:
+        sections.append(arabic_block)
+
+    english_block = "\n".join(
+        [part for part in [title_en, summary_en, hashtags_en] if part]
+    ).strip()
+    if english_block:
+        sections.append(english_block)
+
+    return "\n\n".join(sections).strip()
+
+
+def hydrate_missing_hashtags(posts: dict) -> dict:
+    if not isinstance(posts, dict):
+        posts = {}
+
+    posts.setdefault("telegram_title_ar", "")
+    posts.setdefault("telegram_post_ar", "")
+    posts.setdefault("telegram_title_en", "")
+    posts.setdefault("telegram_post_en", "")
+    posts.setdefault("telegram_hashtags_ar", "#ملخص_إخباري #أخبار")
+    posts.setdefault("telegram_hashtags_en", "#NewsSummary #News")
+    return posts
 
 
 with st.sidebar:
@@ -114,16 +173,22 @@ if run_btn:
             st.session_state.related_view = build_related_sources_view(
                 result.get("related_articles", [])
             )
-            st.session_state.telegram_posts = build_export_posts(
+
+            raw_posts = build_export_posts(
                 result.get("analysis", {}),
                 result.get("related_articles", []),
             )
+            posts = hydrate_missing_hashtags(raw_posts)
+
+            st.session_state.telegram_posts = posts
+            st.session_state.telegram_combined_text = build_combined_telegram_text(posts)
+            st.session_state.telegram_post_generated = True
+            st.session_state.telegram_edit_mode = False
 
 if st.session_state.result:
     result = st.session_state.result
     analysis = result.get("analysis", {})
     article = result.get("article", {})
-    posts = st.session_state.telegram_posts or {}
 
     tabs = st.tabs(["Summary", "Related Sources", "Telegram"])
 
@@ -169,73 +234,122 @@ if st.session_state.result:
     with tabs[2]:
         st.subheader("Telegram")
 
-        telegram_title_ar = st.text_input(
-            "عنوان الخبر بالعربية",
-            value=posts.get("telegram_title_ar", ""),
-            key="telegram_title_ar",
-        )
-        telegram_post_ar = st.text_area(
-            "الملخص العربي",
-            value=posts.get("telegram_post_ar", ""),
-            height=180,
-            key="telegram_post_ar",
-        )
+        posts = hydrate_missing_hashtags(st.session_state.telegram_posts)
 
-        telegram_title_en = st.text_input(
-            "News Title in English",
-            value=posts.get("telegram_title_en", ""),
-            key="telegram_title_en",
-        )
-        telegram_post_en = st.text_area(
-            "English Summary",
-            value=posts.get("telegram_post_en", ""),
-            height=180,
-            key="telegram_post_en",
-        )
+        if not st.session_state.telegram_post_generated:
+            st.info("Analyze a news article first to generate the Telegram post.")
+        else:
+            if st.button("Edit Current Post", use_container_width=False):
+                st.session_state.telegram_edit_mode = True
 
-        ar_message = f"{telegram_title_ar}\n\n{telegram_post_ar}".strip()
-        en_message = f"{telegram_title_en}\n\n{telegram_post_en}".strip()
+            if st.session_state.telegram_edit_mode:
+                st.markdown("### Edit Telegram Post Content")
 
-        c1, c2 = st.columns(2)
-        with c1:
-            st.download_button(
-                "Download Arabic",
-                data=ar_message.encode("utf-8"),
-                file_name="telegram_ar.txt",
-                mime="text/plain",
-                use_container_width=True,
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    telegram_title_ar = st.text_input(
+                        "عنوان الخبر بالعربية",
+                        value=posts.get("telegram_title_ar", ""),
+                        key="edit_telegram_title_ar",
+                    )
+                    telegram_post_ar = st.text_area(
+                        "الملخص العربي",
+                        value=posts.get("telegram_post_ar", ""),
+                        height=160,
+                        key="edit_telegram_post_ar",
+                    )
+                    telegram_hashtags_ar = st.text_input(
+                        "الهاشتاقات العربية",
+                        value=posts.get("telegram_hashtags_ar", "#ملخص_إخباري #أخبار"),
+                        key="edit_telegram_hashtags_ar",
+                    )
+
+                with col2:
+                    telegram_title_en = st.text_input(
+                        "News Title in English",
+                        value=posts.get("telegram_title_en", ""),
+                        key="edit_telegram_title_en",
+                    )
+                    telegram_post_en = st.text_area(
+                        "English Summary",
+                        value=posts.get("telegram_post_en", ""),
+                        height=160,
+                        key="edit_telegram_post_en",
+                    )
+                    telegram_hashtags_en = st.text_input(
+                        "English Hashtags",
+                        value=posts.get("telegram_hashtags_en", "#NewsSummary #News"),
+                        key="edit_telegram_hashtags_en",
+                    )
+
+                save_col1, save_col2 = st.columns(2)
+
+                with save_col1:
+                    if st.button("Save Changes", use_container_width=True):
+                        updated_posts = {
+                            "telegram_title_ar": telegram_title_ar.strip(),
+                            "telegram_post_ar": telegram_post_ar.strip(),
+                            "telegram_hashtags_ar": normalize_hashtags(telegram_hashtags_ar),
+                            "telegram_title_en": telegram_title_en.strip(),
+                            "telegram_post_en": telegram_post_en.strip(),
+                            "telegram_hashtags_en": normalize_hashtags(telegram_hashtags_en),
+                        }
+                        st.session_state.telegram_posts = updated_posts
+                        st.session_state.telegram_combined_text = build_combined_telegram_text(updated_posts)
+                        st.session_state.telegram_edit_mode = False
+                        st.success("Post updated successfully.")
+
+                with save_col2:
+                    if st.button("Cancel Editing", use_container_width=True):
+                        st.session_state.telegram_edit_mode = False
+
+            combined_text = st.text_area(
+                "Telegram post preview and editor",
+                value=st.session_state.telegram_combined_text,
+                height=360,
+                key="telegram_combined_editor",
             )
-        with c2:
-            st.download_button(
-                "Download English",
-                data=en_message.encode("utf-8"),
-                file_name="telegram_en.txt",
-                mime="text/plain",
-                use_container_width=True,
-            )
 
-        st.markdown("---")
-        st.subheader("Publish to Telegram")
+            st.session_state.telegram_combined_text = combined_text
 
-        p1, p2 = st.columns(2)
-        with p1:
-            if st.button("Post Arabic", use_container_width=True):
-                if not ar_message.strip():
-                    st.error("Arabic message is empty.")
-                else:
-                    result_post = post_to_n8n_telegram(ar_message, language="ar")
-                    if result_post["success"]:
-                        st.success("Arabic post sent successfully.")
+            action_col1, action_col2, action_col3 = st.columns([1, 1, 1])
+
+            with action_col1:
+                st.download_button(
+                    "Download Post",
+                    data=st.session_state.telegram_combined_text.encode("utf-8"),
+                    file_name="telegram_post.txt",
+                    mime="text/plain",
+                    use_container_width=True,
+                )
+
+            with action_col2:
+                if st.button("Post", use_container_width=True):
+                    if not st.session_state.telegram_combined_text.strip():
+                        st.error("Telegram post is empty.")
                     else:
-                        st.error(result_post["response_text"])
+                        st.write("Preview message:")
+                        st.code(st.session_state.telegram_combined_text)
 
-        with p2:
-            if st.button("Post English", use_container_width=True):
-                if not en_message.strip():
-                    st.error("English message is empty.")
-                else:
-                    result_post = post_to_n8n_telegram(en_message, language="en")
-                    if result_post["success"]:
-                        st.success("English post sent successfully.")
-                    else:
-                        st.error(result_post["response_text"])
+                        result_post = post_to_n8n_telegram(
+                            st.session_state.telegram_combined_text,
+                            language="multi",
+                        )
+                        if result_post["success"]:
+                            st.success("Telegram post sent successfully.")
+                        else:
+                            st.error(result_post["response_text"])
+
+            with action_col3:
+                if st.button("Regenerate Post", use_container_width=True):
+                    with st.spinner("Regenerating Telegram post..."):
+                        regenerated = build_export_posts(
+                            result.get("analysis", {}),
+                            result.get("related_articles", []),
+                        )
+                        regenerated = hydrate_missing_hashtags(regenerated)
+                        st.session_state.telegram_posts = regenerated
+                        st.session_state.telegram_combined_text = build_combined_telegram_text(regenerated)
+                        st.session_state.telegram_edit_mode = False
+                    st.success("Telegram post regenerated.")
