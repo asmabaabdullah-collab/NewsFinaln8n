@@ -169,8 +169,9 @@ if run_btn:
         else:
             st.session_state.result = result
             st.session_state.related_view = build_related_sources_view(
-                result.get("related_articles", [])
-            )
+              result.get("related_sources", [])
+           )
+           
 
             raw_posts = build_export_posts(
                 result.get("analysis", {}),
