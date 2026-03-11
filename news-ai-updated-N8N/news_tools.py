@@ -30,10 +30,6 @@ def extract_domain_name(url: str) -> str:
 
 
 def resolve_final_url(url: str) -> str:
-    """
-    Try to resolve redirects to get the original publisher URL
-    instead of keeping a Google News redirect URL.
-    """
     if not url:
         return ""
 
@@ -46,8 +42,7 @@ def resolve_final_url(url: str) -> str:
 
     try:
         response = requests.get(url, headers=headers, timeout=20, allow_redirects=True)
-        final_url = response.url or url
-        return final_url
+        return response.url or url
     except Exception:
         return url
 
@@ -85,14 +80,12 @@ def fetch_article_from_url(url: str) -> dict:
         if soup.title and soup.title.string:
             title = clean_text(soup.title.string)
 
-        # حاول التقاط عنوان og:title إذا كان أفضل
         og_title = soup.find("meta", property="og:title")
         if og_title and og_title.get("content"):
             og_title_text = clean_text(og_title.get("content"))
             if og_title_text:
                 title = og_title_text
 
-        # حاول التقاط اسم الموقع من og:site_name
         og_site = soup.find("meta", property="og:site_name")
         if og_site and og_site.get("content"):
             source = clean_text(og_site.get("content")) or source
@@ -122,11 +115,9 @@ def fetch_article_from_url(url: str) -> dict:
         except Exception:
             text = ""
 
-    # تنظيف العنوان إذا كان ما يزال Google News
-    if title.strip().lower() == "google news":
+    if title.strip().lower() in ["google news", "news.google.com", "untitled"]:
         title = source or extract_domain_name(final_url) or "Related source"
 
-    # تنظيف المصدر إذا كان ما يزال news.google.com
     if source.strip().lower() in ["google news", "news.google.com"]:
         source = extract_domain_name(final_url) or "Unknown"
 
@@ -166,8 +157,8 @@ def search_related_articles(query: str, max_results: int = 6) -> list:
         resolved_link = resolve_final_url(raw_link)
 
         entry_title = clean_text(getattr(entry, "title", ""))
-        if entry_title.strip().lower() == "google news":
-            entry_title = source_name or "Related source"
+        if entry_title.strip().lower() in ["google news", "news.google.com", "untitled"]:
+            entry_title = source_name or extract_domain_name(resolved_link) or "Related source"
 
         results.append(
             {
@@ -207,11 +198,14 @@ def fetch_related_articles(query: str, original_url: str = "", max_results: int 
         final_title = article_title or item.get("title", "") or "Untitled"
         final_source = article_source or item.get("source", "") or extract_domain_name(final_link) or "Unknown"
 
-        if final_title.strip().lower() == "google news":
-            final_title = final_source or "Related source"
+        if final_source.strip().lower() in ["google news", "news.google.com", "unknown", ""]:
+            final_source = extract_domain_name(final_link) or "Unknown"
+
+        if final_title.strip().lower() in ["google news", "news.google.com", "untitled"]:
+            final_title = final_source or extract_domain_name(final_link) or "Related source"
 
         if final_source.strip().lower() in ["google news", "news.google.com"]:
-            final_source = extract_domain_name(final_link) or "Unknown"
+            continue
 
         enriched.append(
             {
