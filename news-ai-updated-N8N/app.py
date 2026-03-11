@@ -219,17 +219,21 @@ if st.session_state.result:
             st.info("No key points available.")
 
     with tabs[1]:
-        st.subheader("Related Sources")
+    st.subheader("Related Sources")
 
-        related_items = st.session_state.related_view
-        if related_items:
-            for item in related_items:
-                with st.expander(item.get("title", "Related source")):
-                    st.write(f"**Source:** {item.get('source', 'Unknown')}")
-                    st.write(f"**URL:** {item.get('url', '')}")
+    related_items = st.session_state.related_view
+    if related_items:
+        for idx, item in enumerate(related_items, start=1):
+            with st.container(border=True):
+                st.markdown(f"### {idx}. {item.get('title', 'Related source')}")
+                st.write(f"**Source:** {item.get('source', 'Unknown')}")
+                st.write(f"**Published:** {item.get('published', 'Not available')}")
+                st.write(f"**URL:** {item.get('url', '')}")
+
+                if item.get("summary"):
                     st.write(item.get("summary", ""))
-        else:
-            st.info("No related sources found.")
+    else:
+        st.info("No related sources found.")
 
     with tabs[2]:
         st.subheader("Telegram")
