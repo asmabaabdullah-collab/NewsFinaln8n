@@ -29,7 +29,15 @@ def analyze_news_input(
 
         analysis = analyze_article_content(article)
 
-        search_query = analysis.get("search_query") or article.get("title", "")
+        article_title_fallback = article.get("title", "").strip()
+        article_text_fallback = article.get("text", "").strip()[:120]
+
+        search_query = (
+            analysis.get("search_query")
+            or article_title_fallback
+            or article_text_fallback
+        )
+
         related_articles = fetch_related_articles(
             query=search_query,
             original_url=original_url,
