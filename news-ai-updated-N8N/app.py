@@ -171,48 +171,85 @@ if st.session_state.main_analysis:
         else:
             st.info("No related sources were found.")
 
-    with tabs[2]:
-        st.subheader("Telegram Summaries")
-        posts = st.session_state.export_posts or {}
+with tabs[2]:
+    st.subheader("Telegram Summaries")
+    posts = st.session_state.export_posts or {}
 
-        telegram_post_ar = st.text_area(
-            "ملخص الخبر بالعربية (جاهز لتيليجرام)",
-            posts.get("telegram_post_ar", ""),
-            height=220,
-            key="telegram_post_ar"
+    telegram_title_ar = st.text_input(
+        "عنوان الخبر بالعربية",
+        value=posts.get("telegram_title_ar", ""),
+        key="telegram_title_ar"
+    )
+
+    telegram_post_ar = st.text_area(
+        "ملخص الخبر بالعربية (جاهز لتيليجرام)",
+        posts.get("telegram_post_ar", ""),
+        height=220,
+        key="telegram_post_ar"
+    )
+
+    telegram_title_en = st.text_input(
+        "News Title in English",
+        value=posts.get("telegram_title_en", ""),
+        key="telegram_title_en"
+    )
+
+    telegram_post_en = st.text_area(
+        "News Summary in English (Telegram-ready)",
+        posts.get("telegram_post_en", ""),
+        height=220,
+        key="telegram_post_en"
+    )
+
+    ar_message = f"{telegram_title_ar}\n\n{telegram_post_ar}".strip()
+    en_message = f"{telegram_title_en}\n\n{telegram_post_en}".strip()
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.download_button(
+            "تحميل العربي",
+            data=ar_message.encode("utf-8"),
+            file_name="telegram_ar.txt",
+            mime="text/plain",
+            use_container_width=True,
         )
 
-        telegram_post_en = st.text_area(
-            "News Summary in English (Telegram-ready)",
-            posts.get("telegram_post_en", ""),
-            height=220,
-            key="telegram_post_en"
+    with col2:
+        st.download_button(
+            "Download English",
+            data=en_message.encode("utf-8"),
+            file_name="telegram_en.txt",
+            mime="text/plain",
+            use_container_width=True,
         )
 
-        col1, col2 = st.columns(2)
+    st.markdown("---")
+    st.subheader("Publish to Telegram")
 
-        with col1:
-            st.download_button(
-                "تحميل الملخص العربي",
-                data=telegram_post_ar.encode("utf-8"),
-                file_name="telegram_post_ar.txt",
-                mime="text/plain",
-                use_container_width=True,
-            )
+    post_col1, post_col2 = st.columns(2)
 
-        with col2:
-            st.download_button(
-                "تحميل الملخص الإنجليزي",
-                data=telegram_post_en.encode("utf-8"),
-                file_name="telegram_post_en.txt",
-                mime="text/plain",
-                use_container_width=True,
-            )
+    with post_col1:
+        if st.button("Post Arabic", use_container_width=True):
+            if not telegram_title_ar.strip() and not telegram_post_ar.strip():
+                st.error("Arabic title and summary are empty.")
+            else:
+                result = post_to_n8n_telegram(ar_message, language="ar")
+                if result["success"]:
+                    st.success("Arabic title and summary posted successfully.")
+                else:
+                    st.error(result["response_text"])
 
-        st.markdown("---")
-        st.subheader("Publish to Telegram")
-
-        post_col1, post_col2 = st.columns(2)
+    with post_col2:
+        if st.button("Post English", use_container_width=True):
+            if not telegram_title_en.strip() and not telegram_post_en.strip():
+                st.error("English title and summary are empty.")
+            else:
+                result = post_to_n8n_telegram(en_message, language="en")
+                if result["success"]:
+                    st.success("English title and summary posted successfully.")
+                else:
+                    st.error(result["response_text"])
 
         with post_col1:
             if st.button("Post Arabic Summary", use_container_width=True):
