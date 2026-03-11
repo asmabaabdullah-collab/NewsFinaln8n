@@ -225,8 +225,8 @@ if st.session_state.result:
             else:
                 st.info("لا توجد نقاط رئيسية بالعربية.")
 
-   with tabs[1]:
-       st.subheader("Related Sources")
+  with tabs[1]:
+    st.subheader("Related Sources")
 
     related_items = st.session_state.related_view
     if related_items:
