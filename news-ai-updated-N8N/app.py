@@ -276,3 +276,11 @@ if st.session_state.result:
                         st.success("Telegram post sent successfully.")
                     else:
                         st.error(result_post["response_text"])
+
+st.session_state.result = result
+st.session_state.related_view = build_related_sources_view(
+    result.get("related_articles", [])
+)
+
+st.write("Debug related_articles:", result.get("related_articles", []))
+st.write("Debug related_view:", st.session_state.related_view)
