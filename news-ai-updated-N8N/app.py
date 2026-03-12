@@ -98,18 +98,20 @@ def build_combined_telegram_text(posts: dict) -> str:
     sections = []
 
     arabic_block = "\n".join(
-        [part for part in [title_ar, summary_ar, hashtags_ar] if part]
+        [part for part in [title_ar, "", summary_ar, "", hashtags_ar] if part != ""]
     ).strip()
+
+    english_block = "\n".join(
+        [part for part in [title_en, "", summary_en, "", hashtags_en] if part != ""]
+    ).strip()
+
     if arabic_block:
         sections.append(arabic_block)
 
-    english_block = "\n".join(
-        [part for part in [title_en, summary_en, hashtags_en] if part]
-    ).strip()
     if english_block:
         sections.append(english_block)
 
-    return "\n\n".join(sections).strip()
+    return "\n\n" + "\n\n".join(sections).strip()
 
 
 def hydrate_missing_hashtags(posts: dict) -> dict:
